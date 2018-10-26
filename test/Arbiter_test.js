@@ -82,6 +82,7 @@ contract("Arbiter", () => {
       'receipt',
       'createChainlinkRequest',
       'fulfill',
+      'renounceOwnership',
       'storeReceipt',
       'owner',
       'transferOwnership'
@@ -93,7 +94,7 @@ contract("Arbiter", () => {
     it("can only be called by owner", async () => {
       await tryCatch(arbiterContract.createChainlinkRequest({from: stranger}), errTypes.revert);
       let tx = await arbiterContract.createChainlinkRequest({from: owner});
-      let log = tx.receipt.logs[2];
+      let log = tx.receipt.logs[3];
       assert.equal(log.address, oracleContract.address);
     });
   });

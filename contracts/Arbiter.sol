@@ -1,6 +1,7 @@
 pragma solidity ^0.4.24;
 
 import "chainlink/solidity/contracts/Chainlinked.sol";
+import "openzeppelin-solidity/contracts/ownership/Ownable.sol";
 
 contract Arbiter is Chainlinked, Ownable {
 
