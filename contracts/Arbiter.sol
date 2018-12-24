@@ -1,4 +1,4 @@
-pragma solidity ^0.4.24;
+pragma solidity 0.4.24;
 
 import "chainlink/solidity/contracts/Chainlinked.sol";
 import "openzeppelin-solidity/contracts/ownership/Ownable.sol";
@@ -9,6 +9,7 @@ contract Arbiter is Chainlinked, Ownable {
 
   bytes32 constant FIRST_SPEC_ID = bytes32("abcd");
   bytes32 constant SECOND_SPEC_ID = bytes32("ef01");
+  uint256 constant private ORACLE_PAYMENT = 1 * LINK;
 
   uint256 public amount;
   bytes32 public receipt;
@@ -19,14 +20,14 @@ contract Arbiter is Chainlinked, Ownable {
   }
 
   function createChainlinkRequest() public onlyOwner {
-    ChainlinkLib.Run memory run = newRun(FIRST_SPEC_ID, this, "fulfill(bytes32,uint256)");
-    chainlinkRequest(run, LINK(1));
+    ChainlinkLib.Run memory run = newRun(FIRST_SPEC_ID, this, this.fulfill.selector);
+    chainlinkRequest(run, ORACLE_PAYMENT);
   }
 
   function followUpRequest(uint256 _amount) private {
-    ChainlinkLib.Run memory run = newRun(SECOND_SPEC_ID, this, "storeReceipt(bytes32,bytes32)");
+    ChainlinkLib.Run memory run = newRun(SECOND_SPEC_ID, this, this.storeReceipt.selector);
     run.addUint("amount", _amount);
-    chainlinkRequest(run, LINK(1));
+    chainlinkRequest(run, ORACLE_PAYMENT);
     emit FollowUpRequested(_amount);
   }
 

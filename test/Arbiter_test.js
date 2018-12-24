@@ -7,12 +7,12 @@ let Arbiter = artifacts.require("Arbiter.sol");
 let Oracle = artifacts.require("Oracle.sol");
 let LinkToken = artifacts.require("LinkToken.sol");
 
-contract("Arbiter", () => {
+contract("Arbiter", (accounts) => {
   let tryCatch = require("../helpers.js").tryCatch;
   let errTypes = require("../helpers.js").errTypes;
-  let owner = web3.eth.accounts[0];
-  let stranger = web3.eth.accounts[1];
-  let node = web3.eth.accounts[2];
+  let owner = accounts[0];
+  let stranger = accounts[1];
+  let node = accounts[2];
   let linkContract, oracleContract, arbiterContract;
 
   const ETH_USD_PRICE = 50000;
@@ -48,32 +48,19 @@ contract("Arbiter", () => {
     return bigNum(number).toString(16);
   }
 
-  let getEvents = function getEvents(contract) {
-    return new Promise((resolve, reject) => {
-      contract.allEvents().get((error, events) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(events);
-        };
-      });
-    });
-  }
-
-  let getLatestEvent = async function getLatestEvent(contract) {
-    let events = await getEvents(contract);
-    return events[events.length - 1];
-  }
-
   beforeEach(async () => {
     linkContract = await LinkToken.new();
-    oracleContract = await Oracle.new(linkContract.address);
+    oracleContract = await Oracle.new(linkContract.address, {from: owner});
     arbiterContract = await Arbiter.new(
       linkContract.address, 
       oracleContract.address,
       {from: owner}
     );
-    await linkContract.transfer(arbiterContract.address, web3.toWei('2', 'ether'));
+    await oracleContract.setFulfillmentPermission(
+      node, 
+      true, 
+      {from: owner});
+    await linkContract.transfer(arbiterContract.address, web3.utils.toWei('2', 'ether'));
   });
 
   it('has a limited public interface', () => {
@@ -94,33 +81,29 @@ contract("Arbiter", () => {
     it("can only be called by owner", async () => {
       await tryCatch(arbiterContract.createChainlinkRequest({from: stranger}), errTypes.revert);
       let tx = await arbiterContract.createChainlinkRequest({from: owner});
-      let log = tx.receipt.logs[3];
-      assert.equal(log.address, oracleContract.address);
+      assert.equal(tx.receipt.rawLogs[3].address, oracleContract.address);
     });
   });
 
   describe("fulfill", () => {
-    let internalId;
+    let requestId;
 
     beforeEach(async () => {
       await oracleContract.transferOwnership(node, {from: owner});
-      await arbiterContract.createChainlinkRequest();
-      let event = await getLatestEvent(oracleContract);
-      internalId = event.args.internalId;
+      const tx = await arbiterContract.createChainlinkRequest();
+      requestId = tx.logs[0].args.id;
     });
 
     it("can only be called by the oracle contract", async () => {
       let response = '0x' + encodeUint256(ETH_USD_PRICE);
-      await tryCatch(oracleContract.fulfillData(internalId, response, {from: stranger}), errTypes.revert);
-      await tryCatch(oracleContract.fulfillData(internalId, response, {from: owner}), errTypes.revert);
-      await oracleContract.fulfillData(internalId, response, {from: node});
-      let event = await getLatestEvent(arbiterContract);
-      assert.equal(event.event, "ChainlinkFulfilled");    
+      await tryCatch(oracleContract.fulfillData(requestId, response, {from: stranger}), errTypes.revert);
+      const tx = await oracleContract.fulfillData(requestId, response, {from: node});
+      assert.equal(tx.receipt.rawLogs[0].topics[0], web3.utils.keccak256("ChainlinkFulfilled(bytes32)"));
     });
 
     it("stores the given value", async () => {
       let response = '0x' + encodeUint256(ETH_USD_PRICE);
-      await oracleContract.fulfillData(internalId, response, {from: node});
+      await oracleContract.fulfillData(requestId, response, {from: node});
       let currentValue = await arbiterContract.amount();
       let decoded = await abi.rawDecode(["uint256"], new Buffer(intToHexNoPrefix(currentValue), "hex"));
       assert.equal(decoded.toString(), ETH_USD_PRICE.toString());
@@ -136,51 +119,45 @@ contract("Arbiter", () => {
   });
 
   describe("followUpRequest", () => {
-    let internalId;
+    let requestId, responseTx;
 
     beforeEach(async () => {
       await oracleContract.transferOwnership(node, {from: owner});
-      await arbiterContract.createChainlinkRequest();
-      let event = await getLatestEvent(oracleContract);
-      internalId = event.args.internalId;
+      const tx = await arbiterContract.createChainlinkRequest();
+      requestId = tx.logs[0].args.id;
       let response = '0x' + encodeUint256(ETH_USD_PRICE);
-      await oracleContract.fulfillData(internalId, response, {from: node});
+      responseTx = await oracleContract.fulfillData(requestId, response, {from: node});
     });
 
     it("is called in the fulfill callback", async () => {
-      let events = await getEvents(arbiterContract);
-      assert.equal(events[1].event, "FollowUpRequested");
+      assert.equal(responseTx.receipt.rawLogs[5].topics[0], web3.utils.keccak256("FollowUpRequested(uint256)"));
     });
   });
 
   describe("storeReceipt", () => {
-    let internalId;
+    let requestId, responseTx, followUpRequestId;
 
     beforeEach(async () => {
       await oracleContract.transferOwnership(node, {from: owner});
-      await arbiterContract.createChainlinkRequest();
-      let event = await getLatestEvent(oracleContract);
-      internalId = event.args.internalId;
+      const tx = await arbiterContract.createChainlinkRequest();
+      requestId = tx.logs[0].args.id;
       let response = '0x' + encodeUint256(ETH_USD_PRICE);
-      await oracleContract.fulfillData(internalId, response, {from: node});
-      event = await getLatestEvent(oracleContract);
-      internalId = event.args.internalId;
+      responseTx = await oracleContract.fulfillData(requestId, response, {from: node});
+      followUpRequestId = responseTx.receipt.rawLogs[1].data;
     });
 
     it("can only be called by the oracle contract", async () => {
-      let response = 'Transaction complete.';
-      await tryCatch(oracleContract.fulfillData(internalId, response, {from: stranger}), errTypes.revert);
-      await tryCatch(oracleContract.fulfillData(internalId, response, {from: owner}), errTypes.revert);
-      await oracleContract.fulfillData(internalId, response, {from: node});
-      let event = await getLatestEvent(arbiterContract);
-      assert.equal(event.event, "ChainlinkFulfilled");    
+      let response = web3.utils.keccak256("Transaction complete.");
+      await tryCatch(oracleContract.fulfillData(followUpRequestId, response, {from: stranger}), errTypes.revert);
+      const tx = await oracleContract.fulfillData(followUpRequestId, response, {from: node});
+      assert.equal(tx.receipt.rawLogs[0].topics[0], web3.utils.sha3("ChainlinkFulfilled(bytes32)"));  
     });
 
     it("stores the receipt", async () => {
-      let response = 'Transaction complete.';
-      await oracleContract.fulfillData(internalId, response, {from: node});
+      let response = web3.utils.keccak256("Transaction complete.");
+      await oracleContract.fulfillData(followUpRequestId, response, {from: node});
       let answer = await arbiterContract.receipt();
-      assert.equal(response, web3.toUtf8(answer));
+      assert.equal(response, answer);
     });
   });
 });
