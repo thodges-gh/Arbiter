@@ -14,11 +14,11 @@ The basic workflow is:
 ### Building
 
 ```bash
-npm install
+yarn
 ```
 
 ### Testing
 
 ```bash
-npm test
+yarn test
 ```
